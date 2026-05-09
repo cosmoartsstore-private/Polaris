@@ -1,0 +1,5 @@
+[toolchain]
+# 現在使用中のチャンネル。バージョンを固定する場合は "1.xx.y" に変更すること。
+channel = "stable"
+components = ["rustfmt", "clippy"]
+targets = ["x86_64-pc-windows-msvc"]

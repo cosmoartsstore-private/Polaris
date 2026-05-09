@@ -1,0 +1,14 @@
+/target
+/target-nsis-build
+node_modules
+src-tauri/gen
+
+# Environment / secrets
+.env
+.env.*
+*.pem
+*.key
+
+# Claude Code
+.claude/
+memory/
