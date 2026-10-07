@@ -21,6 +21,9 @@ struct RuntimePaths {
     vrchat_log_folder: PathBuf,
 }
 
+// 一時コピーと残存ファイル削除で同じ拡張子を使用する。
+const BACKUP_TEMP_EXTENSION: &str = "polaris_tmp";
+
 fn main() {
     acquire_mutex();
 
@@ -225,7 +228,7 @@ fn wait_for_stable_size(path: &Path) -> Option<u64> {
 
 /// 一時ファイルにコピー → サイズ検証 → リネーム
 fn safe_copy(source: &Path, destination: &Path) -> Result<()> {
-    let temp_path = destination.with_extension("polaris_tmp");
+    let temp_path = destination.with_extension(BACKUP_TEMP_EXTENSION);
 
     let bytes_copied = std::fs::copy(source, &temp_path).map_err(|e| anyhow!("一時ファイルへのコピーに失敗: {e}"))?;
 
@@ -247,7 +250,7 @@ fn clean_temp_files(archive_folder: &Path) {
 
     for entry in entries.flatten() {
         let path = entry.path();
-        if path.extension().is_some_and(|ext| ext == "polaris_tmp") {
+        if path.extension().is_some_and(|ext| ext == BACKUP_TEMP_EXTENSION) {
             let _ = std::fs::remove_file(&path);
         }
     }
