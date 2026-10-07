@@ -1,7 +1,7 @@
 Unicode true
 ManifestDPIAware true
-; Add in `dpiAwareness` `PerMonitorV2` to manifest for Windows 10 1607+ (note this should not affect lower versions since they should be able to ignore this and pick up `dpiAware` `true` set by `ManifestDPIAware true`)
-; Currently undocumented on NSIS's website but is in the Docs folder of source tree, see
+; Windows 10 1607 以降向けに manifest の dpiAwareness を PerMonitorV2 にする。旧版は ManifestDPIAware true の設定を使う。
+; NSIS の source tree の Docs に定義されている設定。参照先:
 ; https://github.com/kichik/nsis/blob/5fc0b87b819a9eec006df4967d08e522ddd651c9/Docs/src/attributes.but#L286-L300
 ; https://github.com/tauri-apps/tauri/pull/10106
 ManifestDPIAwareness PerMonitorV2
@@ -9,7 +9,7 @@ ManifestDPIAwareness PerMonitorV2
 !if "{{compression}}" == "none"
   SetCompress off
 !else
-  ; Set the compression algorithm. We default to LZMA.
+  ; 既定の圧縮方式として LZMA を使用する。
   SetCompressor /SOLID "{{compression}}"
 !endif
 
@@ -70,8 +70,8 @@ Name "${PRODUCTNAME}"
 BrandingText "${COPYRIGHT}"
 OutFile "${OUTFILE}"
 
-; We don't actually use this value as default install path,
-; it's just for nsis to append the product name folder in the directory selector
+; この値は既定のインストール先には使用しない。
+; directory 選択画面で product 名のフォルダを付加するために使用する。
 ; https://nsis.sourceforge.io/Reference/InstallDir
 !define PLACEHOLDER_INSTALL_DIR "placeholder\${PRODUCTNAME}"
 InstallDir "${PLACEHOLDER_INSTALL_DIR}"
@@ -83,15 +83,15 @@ VIAddVersionKey "LegalCopyright" "${COPYRIGHT}"
 VIAddVersionKey "FileVersion" "${VERSION}"
 VIAddVersionKey "ProductVersion" "${VERSION}"
 
-# additional plugins
+# 追加 plugin
 !addplugindir "${ADDITIONALPLUGINSPATH}"
 
-; Uninstaller signing command
+; アンインストーラーの署名 command
 !if "${UNINSTALLERSIGNCOMMAND}" != ""
   !uninstfinalize '${UNINSTALLERSIGNCOMMAND}'
 !endif
 
-; Handle install mode, `perUser`, `perMachine` or `both`
+; perUser、perMachine、both の install mode を処理する。
 !if "${INSTALLMODE}" == "perMachine"
   RequestExecutionLevel admin
 !endif
@@ -117,49 +117,49 @@ VIAddVersionKey "ProductVersion" "${VERSION}"
   !include MultiUser.nsh
 !endif
 
-; Installer icon
+; インストーラーのアイコン
 !if "${INSTALLERICON}" != ""
   !define MUI_ICON "${INSTALLERICON}"
 !endif
 
-; Define registry key to store installer language
+; インストーラーの言語を保存する registry key
 !define MUI_LANGDLL_REGISTRY_ROOT "HKCU"
 !define MUI_LANGDLL_REGISTRY_KEY "${MANUPRODUCTKEY}"
 !define MUI_LANGDLL_REGISTRY_VALUENAME "Installer Language"
 
-; Installer pages, must be ordered as they appear
-; 1. Welcome Page
+; インストーラーの画面は表示順に定義する。
+; 1. 開始画面
 !define MUI_PAGE_CUSTOMFUNCTION_PRE SkipIfPassive
 !insertmacro MUI_PAGE_WELCOME
 
-; 2. License Page (if defined)
+; 2. license 画面（定義がある場合）
 !if "${LICENSE}" != ""
   !define MUI_PAGE_CUSTOMFUNCTION_PRE SkipIfPassive
   !insertmacro MUI_PAGE_LICENSE "${LICENSE}"
 !endif
 
-; 3. Install mode (if it is set to `both`)
+; 3. install mode 選択（both の場合）
 !if "${INSTALLMODE}" == "both"
   !define MUI_PAGE_CUSTOMFUNCTION_PRE SkipIfPassive
   !insertmacro MULTIUSER_PAGE_INSTALLMODE
 !endif
 
-; 4. Custom page to ask user if he wants to reinstall/uninstall
-;    only if a previous installation was detected
+; 4. 再インストールとアンインストールの選択
+;    既存のインストールを検出した場合だけ表示する。
 Var ReinstallPageCheck
 Page custom PageReinstall PageLeaveReinstall
 Function PageReinstall
-  ; Uninstall previous WiX installation if exists.
+  ; WiX による既存のインストールがある場合は削除する。
   ;
-  ; A WiX installer stores the installation info in registry
-  ; using a UUID and so we have to loop through all keys under
+  ; WiX はインストール情報を UUID ごとの registry key に保存する。
+  ; 次の key 配下を列挙して対象を探す。
   ; `HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall`
-  ; and check if `DisplayName` and `Publisher` keys match ${PRODUCTNAME} and ${MANUFACTURER}
+  ; DisplayName と Publisher が ${PRODUCTNAME} と ${MANUFACTURER} に一致するか確認する。
   ;
-  ; This has a potential issue that there maybe another installation that matches
-  ; our ${PRODUCTNAME} and ${MANUFACTURER} but wasn't installed by our WiX installer,
-  ; however, this should be fine since the user will have to confirm the uninstallation
-  ; and they can chose to abort it if doesn't make sense.
+  ; 同じ product 名と publisher を持つ別のインストールが一致する可能性がある。
+  ; この WiX installer 由来とは限らないため、
+  ; 削除は利用者への確認を経て実行し、
+  ; 対象が異なる場合は中止できるようにする。
   StrCpy $0 0
   wix_loop:
     EnumRegKey $1 HKLM "SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall" $0
@@ -177,13 +177,13 @@ Function PageReinstall
     Goto compare_version
   wix_loop_done:
 
-  ; Check if there is an existing installation, if not, abort the reinstall page
+  ; 既存のインストールがなければ再インストール画面を省略する。
   ReadRegStr $R0 SHCTX "${UNINSTKEY}" ""
   ReadRegStr $R1 SHCTX "${UNINSTKEY}" "UninstallString"
   ${IfThen} "$R0$R1" == "" ${|} Abort ${|}
 
-  ; Compare this installar version with the existing installation
-  ; and modify the messages presented to the user accordingly
+  ; installer と既存アプリの version を比較し、
+  ; 比較結果に応じて案内文を切り替える。
   compare_version:
   StrCpy $R4 "$(older)"
   ${If} $WixMode = 1
@@ -195,19 +195,19 @@ Function PageReinstall
 
   nsis_tauri_utils::SemverCompare "${VERSION}" $R0
   Pop $R0
-  ; Reinstalling the same version
+  ; 同じ version の再インストール
   ${If} $R0 = 0
     StrCpy $R1 "$(alreadyInstalledLong)"
     StrCpy $R2 "$(addOrReinstall)"
     StrCpy $R3 "$(uninstallApp)"
     !insertmacro MUI_HEADER_TEXT "$(alreadyInstalled)" "$(chooseMaintenanceOption)"
-  ; Upgrading
+  ; 更新
   ${ElseIf} $R0 = 1
     StrCpy $R1 "$(olderOrUnknownVersionInstalled)"
     StrCpy $R2 "$(uninstallBeforeInstalling)"
     StrCpy $R3 "$(dontUninstall)"
     !insertmacro MUI_HEADER_TEXT "$(alreadyInstalled)" "$(choowHowToInstall)"
-  ; Downgrading
+  ; 旧 version への変更
   ${ElseIf} $R0 = -1
     StrCpy $R1 "$(newerVersionInstalled)"
     StrCpy $R2 "$(uninstallBeforeInstalling)"
@@ -221,12 +221,12 @@ Function PageReinstall
     Abort
   ${EndIf}
 
-  ; Skip showing the page if passive
+  ; passive mode では画面を省略する。
   ;
-  ; Note that we don't call this earlier at the begining
-  ; of this function because we need to populate some variables
-  ; related to current installed version if detected and whether
-  ; we are downgrading or not.
+  ; 画面の省略判定は、既存 version と更新方向に関する
+  ; 変数を設定した後に行う。
+  ; そのため、関数の開始直後には省略しない。
+  ;
   ${If} $PassiveMode = 1
     Call PageLeaveReinstall
   ${Else}
@@ -243,15 +243,15 @@ Function PageReinstall
 
     ${NSD_CreateRadioButton} 30u 70u -30u 8u $R3
     Pop $R3
-    ; Disable this radio button if downgrading and downgrades are disabled
+    ; 旧 version への変更が禁止されている場合は選択肢を無効にする。
     !if "${ALLOWDOWNGRADES}" == "false"
       ${IfThen} $R0 = -1 ${|} EnableWindow $R3 0 ${|}
     !endif
     ${NSD_OnClick} $R3 PageReinstallUpdateSelection
 
-    ; Check the first radio button if this the first time
-    ; we enter this page or if the second button wasn't
-    ; selected the last time we were on this page
+    ; 初回表示、または前回の表示で2番目の選択肢が選ばれていない場合は、
+    ; 1番目の選択肢を選択状態にする。
+    ;
     ${If} $ReinstallPageCheck <> 2
       SendMessage $R2 ${BM_SETCHECK} ${BST_CHECKED} 0
     ${Else}
@@ -273,20 +273,20 @@ FunctionEnd
 Function PageLeaveReinstall
   ${NSD_GetState} $R2 $R1
 
-  ; If migrating from Wix, always uninstall
+  ; WiX からの移行では必ず既存アプリを削除する。
   ${If} $WixMode = 1
     Goto reinst_uninstall
   ${EndIf}
 
-  ; In update mode, always proceeds without uninstalling
+  ; update mode では削除せずに更新する。
   ${If} $UpdateMode = 1
     Goto reinst_done
   ${EndIf}
 
-  ; $R0 holds whether same(0)/upgrading(1)/downgrading(-1) version
-  ; $R1 holds the radio buttons state:
-  ;   1 => first choice was selected
-  ;   0 => second choice was selected
+  ; $R0 は version の比較結果（同じ: 0、更新: 1、旧版へ変更: -1）を持つ。
+  ; $R1 は選択状態を持つ。
+  ;   1: 1番目の選択肢
+  ;   0: 2番目の選択肢
   ${If} $R0 = 0 ; Same version, proceed
     ${If} $R1 = 1              ; User chose to add/reinstall
       Goto reinst_done
@@ -329,29 +329,29 @@ Function PageLeaveReinstall
 
     ${If} $0 <> 0
     ${OrIf} ${FileExists} "$INSTDIR\${MAINBINARYNAME}.exe"
-      ; User cancelled wix uninstaller? return to select un/reinstall page
+      ; WiX の削除が中止された場合は選択画面へ戻る。
       ${If} $WixMode = 1
       ${AndIf} $0 = 1602
         Abort
       ${EndIf}
 
-      ; User cancelled NSIS uninstaller? return to select un/reinstall page
+      ; NSIS の削除が中止された場合は選択画面へ戻る。
       ${If} $0 = 1
         Abort
       ${EndIf}
 
-      ; Other erros? show generic error message and return to select un/reinstall page
+      ; その他の失敗ではエラーを表示して選択画面へ戻る。
       MessageBox MB_ICONEXCLAMATION "$(unableToUninstall)"
       Abort
     ${EndIf}
   reinst_done:
 FunctionEnd
 
-; 5. Choose install directory page
+; 5. インストール先の選択
 !define MUI_PAGE_CUSTOMFUNCTION_PRE SkipIfPassive
 !insertmacro MUI_PAGE_DIRECTORY
 
-; 6. Start menu shortcut page
+; 6. Start menu の shortcut 選択
 Var AppStartMenuFolder
 !if "${STARTMENUFOLDER}" != ""
   !define MUI_PAGE_CUSTOMFUNCTION_PRE SkipIfPassive
@@ -361,19 +361,19 @@ Var AppStartMenuFolder
 !endif
 !insertmacro MUI_PAGE_STARTMENU Application $AppStartMenuFolder
 
-; 7. Installation page
+; 7. インストールの実行
 !insertmacro MUI_PAGE_INSTFILES
 
-; 8. Finish page
+; 8. 完了画面
 ;
-; Don't auto jump to finish page after installation page,
-; because the installation page has useful info that can be used debug any issues with the installer.
+; インストール画面には失敗の調査に必要な情報があるため、
+; 自動で完了画面へ移動しない。
 !define MUI_FINISHPAGE_NOAUTOCLOSE
-; Use show readme button in the finish page as a button create a desktop shortcut
+; 完了画面の README 表示ボタンを desktop shortcut 作成に使用する。
 !define MUI_FINISHPAGE_SHOWREADME
 !define MUI_FINISHPAGE_SHOWREADME_TEXT "$(createDesktop)"
 !define MUI_FINISHPAGE_SHOWREADME_FUNCTION CreateOrUpdateDesktopShortcut
-; Show run app after installation.
+; インストール後のアプリ起動を選択できるようにする。
 !define MUI_FINISHPAGE_RUN
 !define MUI_FINISHPAGE_RUN_FUNCTION RunMainBinary
 !define MUI_PAGE_CUSTOMFUNCTION_PRE SkipIfPassive
@@ -383,15 +383,15 @@ Function RunMainBinary
   nsis_tauri_utils::RunAsUser "$INSTDIR\${MAINBINARYNAME}.exe" ""
 FunctionEnd
 
-; Uninstaller Pages
-; 1. Confirm uninstall page
+; アンインストーラーの画面
+; 1. 削除の確認
 !define MUI_PAGE_CUSTOMFUNCTION_PRE un.SkipIfPassive
 !insertmacro MUI_UNPAGE_CONFIRM
 
-; 2. Uninstalling Page
+; 2. 削除の実行
 !insertmacro MUI_UNPAGE_INSTFILES
 
-;Languages
+;言語
 {{#each languages}}
 !insertmacro MUI_LANGUAGE "{{this}}"
 {{/each}}
@@ -423,7 +423,7 @@ Function .onInit
   !insertmacro SetContext
 
   ${If} $INSTDIR == "${PLACEHOLDER_INSTALL_DIR}"
-    ; Set default install location
+    ; 既定のインストール先を設定する。
     !if "${INSTALLMODE}" == "perMachine"
       ${If} ${RunningX64}
         !if "${ARCH}" == "x64"
@@ -481,10 +481,10 @@ FunctionEnd
 
 
 Section EarlyChecks
-  ; Abort silent installer if downgrades is disabled
+  ; 旧 version への変更が禁止されている場合は silent mode の処理を中止する。
   !if "${ALLOWDOWNGRADES}" == "false"
   ${If} ${Silent}
-    ; If downgrading
+    ; 旧 version へ変更する場合
     ${If} $R0 = -1
       System::Call 'kernel32::AttachConsole(i -1)i.r0'
       ${If} $0 <> 0
@@ -500,7 +500,7 @@ Section EarlyChecks
 SectionEnd
 
 Section WebView2
-  ; Check if Webview2 is already installed and skip this section
+  ; WebView2 が導入済みなら、この処理を省略する。
   ${If} ${RunningX64}
     ReadRegStr $4 HKLM "SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\${WEBVIEW2APPGUID}" "pv"
   ${Else}
@@ -511,9 +511,9 @@ Section WebView2
   ${EndIf}
 
   ${If} $4 == ""
-    ; Webview2 installation
+    ; WebView2 の導入
     ;
-    ; Skip if updating
+    ; 更新時は省略する。
     ${If} $UpdateMode <> 1
       !if "${INSTALLWEBVIEW2MODE}" == "downloadBootstrapper"
         Delete "$TEMP\MicrosoftEdgeWebview2Setup.exe"
@@ -550,7 +550,7 @@ Section WebView2
 
       install_webview2:
         DetailPrint "$(installingWebview2)"
-        ; $6 holds the path to the webview2 installer
+        ; $6 は WebView2 installer のパスを持つ。
         ExecWait "$6 ${WEBVIEW2INSTALLERARGS} /install" $1
         ${If} $1 = 0
           DetailPrint "$(webview2InstallSuccess)"
@@ -575,8 +575,8 @@ Section WebView2
             ReadRegStr $R1 HKCU "SOFTWARE\Microsoft\EdgeUpdate" "path"
           ${EndIf}
           ${If} $R1 != ""
-            ; Chromium updater docs: https://source.chromium.org/chromium/chromium/src/+/main:docs/updater/user_manual.md
-            ; Modified from "HKEY_LOCAL_MACHINE\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\Microsoft EdgeWebView\ModifyPath"
+            ; Chromium updater の仕様: https://source.chromium.org/chromium/chromium/src/+/main:docs/updater/user_manual.md
+            ; 参照元: HKEY_LOCAL_MACHINE\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\Microsoft EdgeWebView\ModifyPath
             ExecWait `"$R1" /install appguid=${WEBVIEW2APPGUID}&needsadmin=true` $1
             ${If} $1 = 0
               DetailPrint "$(webview2InstallSuccess)"
@@ -600,10 +600,10 @@ Section Install
 
   !insertmacro CheckIfAppIsRunning "${MAINBINARYNAME}.exe" "${PRODUCTNAME}"
 
-  ; Copy main executable
+  ; 主実行ファイルの配置
   File "${MAINBINARYSRCPATH}"
 
-  ; Copy resources
+  ; resource の配置
   {{#each resources_dirs}}
     CreateDirectory "$INSTDIR\\{{this}}"
   {{/each}}
@@ -611,19 +611,19 @@ Section Install
     File /a "/oname={{this.[1]}}" "{{no-escape @key}}"
   {{/each}}
 
-  ; Copy external binaries
+  ; 外部実行ファイルの配置
   {{#each binaries}}
     File /a "/oname={{this}}" "{{no-escape @key}}"
   {{/each}}
 
-  ; Create file associations
+  ; ファイル関連付けの登録
   {{#each file_associations as |association| ~}}
     {{#each association.ext as |ext| ~}}
        !insertmacro APP_ASSOCIATE "{{ext}}" "{{or association.name ext}}" "{{association-description association.description ext}}" "$INSTDIR\${MAINBINARYNAME}.exe,0" "Open with ${PRODUCTNAME}" "$INSTDIR\${MAINBINARYNAME}.exe $\"%1$\""
     {{/each}}
   {{/each}}
 
-  ; Register deep links
+  ; deep link の登録
   {{#each deep_link_protocols as |protocol| ~}}
     WriteRegStr SHCTX "Software\Classes\\{{protocol}}" "URL Protocol" ""
     WriteRegStr SHCTX "Software\Classes\\{{protocol}}" "" "URL:${BUNDLEID} protocol"
@@ -631,29 +631,29 @@ Section Install
     WriteRegStr SHCTX "Software\Classes\\{{protocol}}\shell\open\command" "" "$\"$INSTDIR\${MAINBINARYNAME}.exe$\" $\"%1$\""
   {{/each}}
 
-  ; Create uninstaller
+  ; アンインストーラーの生成
   WriteUninstaller "$INSTDIR\uninstall.exe"
 
-  ; Save $INSTDIR in registry for future installations
+  ; 次回のインストールに使用する $INSTDIR を registry に保存する。
   WriteRegStr SHCTX "${MANUPRODUCTKEY}" "" $INSTDIR
 
   !if "${INSTALLMODE}" == "both"
-    ; Save install mode to be selected by default for the next installation such as updating
-    ; or when uninstalling
+    ; 次回の更新または削除で使用する install mode を保存する。
+    ;
     WriteRegStr SHCTX "${UNINSTKEY}" $MultiUser.InstallMode 1
   !endif
 
-  ; Remove old main binary if it doesn't match new main binary name
+  ; 主実行ファイル名が変わった場合は旧ファイルを削除する。
   ReadRegStr $OldMainBinaryName SHCTX "${UNINSTKEY}" "MainBinaryName"
   ${If} $OldMainBinaryName != ""
   ${AndIf} $OldMainBinaryName != "${MAINBINARYNAME}.exe"
     Delete "$INSTDIR\$OldMainBinaryName"
   ${EndIf}
 
-  ; Save current MAINBINARYNAME for future updates
+  ; 次回の更新に使用する MAINBINARYNAME を保存する。
   WriteRegStr SHCTX "${UNINSTKEY}" "MainBinaryName" "${MAINBINARYNAME}.exe"
 
-  ; Registry information for add/remove programs
+  ; Windows のアプリ一覧への登録
   WriteRegStr SHCTX "${UNINSTKEY}" "DisplayName" "${PRODUCTNAME}"
   WriteRegStr SHCTX "${UNINSTKEY}" "DisplayIcon" "$\"$INSTDIR\${MAINBINARYNAME}.exe$\""
   WriteRegStr SHCTX "${UNINSTKEY}" "DisplayVersion" "${VERSION}"
@@ -674,13 +674,13 @@ Section Install
     WriteRegStr SHCTX "${UNINSTKEY}" "HelpLink" "${HOMEPAGE}"
   !endif
 
-  ; Create start menu shortcut
+  ; Start menu の shortcut 作成
   !insertmacro MUI_STARTMENU_WRITE_BEGIN Application
     Call CreateOrUpdateStartMenuShortcut
   !insertmacro MUI_STARTMENU_WRITE_END
 
-  ; Create desktop shortcut for silent and passive installers
-  ; because finish page will be skipped
+  ; silent / passive mode では完了画面を省略するため、
+  ; ここで desktop shortcut を作成する。
   ${If} $PassiveMode = 1
   ${OrIf} ${Silent}
     Call CreateOrUpdateDesktopShortcut
@@ -690,18 +690,18 @@ Section Install
     !insertmacro NSIS_HOOK_POSTINSTALL
   !endif
 
-  ; 追加: 共通命名規則に基づくレジストリ位置への書き込み
+  ; 追加: 共通命名規則に基づくregistry位置への書き込み
   WriteRegStr HKCU "Software\CosmoArtsStore\Polaris" "InstallLocation" "$INSTDIR"
 
-  ; Auto close this page for passive mode
+  ; passive mode ではこの画面を自動で閉じる。
   ${If} $PassiveMode = 1
     SetAutoClose true
   ${EndIf}
 SectionEnd
 
 Function .onInstSuccess
-  ; Check for `/R` flag only in silent and passive installers because
-  ; GUI installer has a toggle for the user to (re)start the app
+  ; アプリを起動する /R の判定は silent / passive mode だけで行う。
+  ; GUI では完了画面の選択に従って起動する。
   ${If} $PassiveMode = 1
   ${OrIf} ${Silent}
     ${GetOptions} $CMDLINE "/R" $R0
@@ -740,28 +740,28 @@ Section Uninstall
 
   !insertmacro CheckIfAppIsRunning "${MAINBINARYNAME}.exe" "${PRODUCTNAME}"
 
-  ; Delete the app directory and its content from disk
-  ; Copy main executable
+  ; アプリ本体と同梱ファイルの削除
+  ; 主実行ファイルの削除
   Delete "$INSTDIR\${MAINBINARYNAME}.exe"
 
-  ; Delete resources
+  ; resource の削除
   {{#each resources}}
     Delete "$INSTDIR\\{{this.[1]}}"
   {{/each}}
 
-  ; Delete external binaries
+  ; 外部実行ファイルの削除
   {{#each binaries}}
     Delete "$INSTDIR\\{{this}}"
   {{/each}}
 
-  ; Delete app associations
+  ; ファイル関連付けの解除
   {{#each file_associations as |association| ~}}
     {{#each association.ext as |ext| ~}}
       !insertmacro APP_UNASSOCIATE "{{ext}}" "{{or association.name ext}}"
     {{/each}}
   {{/each}}
 
-  ; Delete deep links
+  ; deep link の解除
   {{#each deep_link_protocols as |protocol| ~}}
     ReadRegStr $R7 SHCTX "Software\Classes\\{{protocol}}\shell\open\command" ""
     ${If} $R7 == "$\"$INSTDIR\${MAINBINARYNAME}.exe$\" $\"%1$\""
@@ -770,7 +770,7 @@ Section Uninstall
   {{/each}}
 
 
-  ; Delete uninstaller
+  ; アンインストーラーの削除
   Delete "$INSTDIR\uninstall.exe"
 
   {{#each resources_ancestors}}
@@ -778,11 +778,11 @@ Section Uninstall
   {{/each}}
   RMDir "$INSTDIR"
 
-  ; Remove shortcuts if not updating
+  ; 通常の削除時だけ shortcut を削除する。
   ${If} $UpdateMode <> 1
     !insertmacro DeleteAppUserModelId
 
-    ; Remove start menu shortcut
+    ; Start menu の shortcut 削除
     !insertmacro MUI_STARTMENU_GETFOLDER Application $AppStartMenuFolder
     !insertmacro IsShortcutTarget "$SMPROGRAMS\$AppStartMenuFolder\${PRODUCTNAME}.lnk" "$INSTDIR\${MAINBINARYNAME}.exe"
     Pop $0
@@ -798,7 +798,7 @@ Section Uninstall
       Delete "$SMPROGRAMS\${PRODUCTNAME}.lnk"
     ${EndIf}
 
-    ; Remove desktop shortcuts
+    ; desktop shortcut の削除
     !insertmacro IsShortcutTarget "$DESKTOP\${PRODUCTNAME}.lnk" "$INSTDIR\${MAINBINARYNAME}.exe"
     Pop $0
     ${If} $0 = 1
@@ -807,7 +807,7 @@ Section Uninstall
     ${EndIf}
   ${EndIf}
 
-  ; Remove registry information for add/remove programs
+  ; Windows のアプリ一覧への登録を削除する。
   !if "${INSTALLMODE}" == "both"
     DeleteRegKey SHCTX "${UNINSTKEY}"
   !else if "${INSTALLMODE}" == "perMachine"
@@ -816,16 +816,16 @@ Section Uninstall
     DeleteRegKey HKCU "${UNINSTKEY}"
   !endif
 
-  ; Removes the Autostart entry for ${PRODUCTNAME} from the HKCU Run key if it exists.
-  ; This ensures the program does not launch automatically after uninstallation if it exists.
-  ; If it doesn't exist, it does nothing.
-  ; We do this when not updating (to preserve the registry value on updates)
+  ; 通常の削除時は HKCU Run key の ${PRODUCTNAME} を削除する。
+  ; アンインストール後に自動起動しないようにする。
+  ; 登録がない場合は処理を行わない。
+  ; 更新時は自動起動設定を保持する。
   ${If} $UpdateMode <> 1
     DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "${PRODUCTNAME}"
   ${EndIf}
 
-  ; Clean up everything except Data\archive\ (irreplaceable log data)
-  ; Polaris has no DB (Data\db) and no UI (Data\EBWebView) — skip those
+  ; 再生成できないログを持つ Data\archive は保持する。
+  ; Polaris には DB と画面がないため、Data\db と Data\EBWebView の削除は不要である。
   ${If} $UpdateMode <> 1
     DeleteRegKey SHCTX "${MANUPRODUCTKEY}"
     DeleteRegKey /ifempty SHCTX "${MANUKEY}"
@@ -835,12 +835,12 @@ Section Uninstall
     DeleteRegKey HKCU "Software\CosmoArtsStore\Polaris"
     SetShellVarContext current
     RmDir /r "$INSTDIR\Data\logs"
-    ; Legacy files at install root (pre-refactor)
+    ; 旧配置でインストール先直下に作られたファイル
     Delete "$INSTDIR\info.log"
     RmDir /r "$APPDATA\${BUNDLEID}"
     RmDir /r "$LOCALAPPDATA\${BUNDLEID}"
-    ; NEVER delete Data\archive — log copies are irreplaceable
-    ; Remove Data\ and $INSTDIR only if empty (archive survives)
+    ; ログ原本のコピーを保持するため、Data\archive は削除しない。
+    ; archive を保持し、Data と $INSTDIR は空の場合だけ削除する。
     RmDir "$INSTDIR\Data"
     RmDir "$INSTDIR"
   ${EndIf}
@@ -849,7 +849,7 @@ Section Uninstall
     !insertmacro NSIS_HOOK_POSTUNINSTALL
   !endif
 
-  ; Auto close if passive mode or updating
+  ; passive mode または更新時は自動で閉じる。
   ${If} $PassiveMode = 1
   ${OrIf} $UpdateMode = 1
     SetAutoClose true
@@ -874,8 +874,8 @@ Function un.SkipIfPassive
 FunctionEnd
 
 Function CreateOrUpdateStartMenuShortcut
-  ; We used to use product name as MAINBINARYNAME
-  ; migrate old shortcuts to target the new MAINBINARYNAME
+  ; 旧版では product 名を MAINBINARYNAME に使用していたため、
+  ; 旧 shortcut の参照先を現在の MAINBINARYNAME に変更する。
   StrCpy $R0 0
 
   !insertmacro IsShortcutTarget "$SMPROGRAMS\$AppStartMenuFolder\${PRODUCTNAME}.lnk" "$INSTDIR\$OldMainBinaryName"
@@ -896,8 +896,8 @@ Function CreateOrUpdateStartMenuShortcut
     Return
   ${EndIf}
 
-  ; Skip creating shortcut if in update mode or no shortcut mode
-  ; but always create if migrating from wix
+  ; 更新時または shortcut 作成を無効にした場合は作成を省略する。
+  ; ただし WiX からの移行では作成する。
   ${If} $WixMode = 0
     ${If} $UpdateMode = 1
     ${OrIf} $NoShortcutMode = 1
@@ -916,8 +916,8 @@ Function CreateOrUpdateStartMenuShortcut
 FunctionEnd
 
 Function CreateOrUpdateDesktopShortcut
-  ; We used to use product name as MAINBINARYNAME
-  ; migrate old shortcuts to target the new MAINBINARYNAME
+  ; 旧版では product 名を MAINBINARYNAME に使用していたため、
+  ; 旧 shortcut の参照先を現在の MAINBINARYNAME に変更する。
   !insertmacro IsShortcutTarget "$DESKTOP\${PRODUCTNAME}.lnk" "$INSTDIR\$OldMainBinaryName"
   Pop $0
   ${If} $0 = 1
@@ -925,8 +925,8 @@ Function CreateOrUpdateDesktopShortcut
     Return
   ${EndIf}
 
-  ; Skip creating shortcut if in update mode or no shortcut mode
-  ; but always create if migrating from wix
+  ; 更新時または shortcut 作成を無効にした場合は作成を省略する。
+  ; ただし WiX からの移行では作成する。
   ${If} $WixMode = 0
     ${If} $UpdateMode = 1
     ${OrIf} $NoShortcutMode = 1

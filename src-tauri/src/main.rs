@@ -2,21 +2,18 @@
 
 use std::fs::OpenOptions;
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::{ Path, PathBuf };
 use std::time::Duration;
 
-use anyhow::{anyhow, Result};
-use tracing::{debug, error};
+use anyhow::{ anyhow, Result };
+use tracing::{ debug, error };
 use tracing_subscriber::fmt;
 use windows::core::PCWSTR;
-use windows::Win32::Foundation::{CloseHandle, GetLastError, ERROR_ALREADY_EXISTS};
-use windows::Win32::System::Diagnostics::ToolHelp::{
-    CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W,
-    TH32CS_SNAPPROCESS,
-};
+use windows::Win32::Foundation::{ CloseHandle, GetLastError, ERROR_ALREADY_EXISTS };
+use windows::Win32::System::Diagnostics::ToolHelp::{ CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W, TH32CS_SNAPPROCESS, };
 use windows::Win32::System::Threading::CreateMutexW;
-use windows::Win32::UI::WindowsAndMessaging::{MessageBoxW, MB_ICONERROR, MB_OK};
-use winreg::enums::{HKEY_CURRENT_USER, KEY_READ};
+use windows::Win32::UI::WindowsAndMessaging::{ MessageBoxW, MB_ICONERROR, MB_OK };
+use winreg::enums::{ HKEY_CURRENT_USER, KEY_READ };
 use winreg::RegKey;
 
 struct RuntimePaths {
@@ -76,8 +73,8 @@ fn run_polling_loop(runtime_paths: &RuntimePaths) -> ! {
         let current_pid = find_vrchat_pid();
 
         let exited = match (tracked_pid, current_pid) {
-            (Some(_), None) => true,                       // 終了
-            (Some(old), Some(new)) if old != new => true,  // 再起動
+            (Some(_), None) => true,                      // 終了
+            (Some(old), Some(new)) if old != new => true, // 再起動
             _ => false,
         };
 
@@ -105,11 +102,7 @@ fn find_vrchat_pid() -> Option<u32> {
     let found = unsafe {
         if Process32FirstW(snapshot, &raw mut entry).is_ok() {
             loop {
-                let nul_pos = entry
-                    .szExeFile
-                    .iter()
-                    .position(|&c| c == 0)
-                    .unwrap_or(entry.szExeFile.len());
+                let nul_pos = entry.szExeFile.iter().position(|&c| c == 0).unwrap_or(entry.szExeFile.len());
                 let name = String::from_utf16_lossy(&entry.szExeFile[..nul_pos]);
 
                 if name.eq_ignore_ascii_case("vrchat.exe") {
@@ -137,10 +130,7 @@ fn backup(runtime_paths: &RuntimePaths) {
     let archive_folder = &runtime_paths.archive_folder;
 
     if let Err(e) = std::fs::create_dir_all(archive_folder) {
-        error!(
-            "archiveフォルダを作成できませんでした [{}]: {e}",
-            archive_folder.display()
-        );
+        error!("archiveフォルダを作成できませんでした [{}]: {e}", archive_folder.display());
         return;
     }
 
@@ -150,10 +140,7 @@ fn backup(runtime_paths: &RuntimePaths) {
     let entries = match std::fs::read_dir(log_folder) {
         Ok(entries) => entries,
         Err(e) => {
-            error!(
-                "ログフォルダを開けませんでした [{}]: {e}",
-                log_folder.display()
-            );
+            error!("ログフォルダを開けませんでした [{}]: {e}", log_folder.display());
             return;
         }
     };
@@ -209,10 +196,7 @@ fn is_vrchat_log(path: &Path) -> bool {
     let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
         return false;
     };
-    name.starts_with("output_log_")
-        && path
-            .extension()
-            .is_some_and(|ext| ext.eq_ignore_ascii_case("txt"))
+    name.starts_with("output_log_") && path.extension().is_some_and(|ext| ext.eq_ignore_ascii_case("txt"))
 }
 
 /// 同名ファイルのサイズが一致し、かつ 0 でないか判定
@@ -243,16 +227,13 @@ fn wait_for_stable_size(path: &Path) -> Option<u64> {
 fn safe_copy(source: &Path, destination: &Path) -> Result<()> {
     let temp_path = destination.with_extension("polaris_tmp");
 
-    let bytes_copied = std::fs::copy(source, &temp_path)
-        .map_err(|e| anyhow!("一時ファイルへのコピーに失敗: {e}"))?;
+    let bytes_copied = std::fs::copy(source, &temp_path).map_err(|e| anyhow!("一時ファイルへのコピーに失敗: {e}"))?;
 
     let tmp_size = std::fs::metadata(&temp_path).map(|m| m.len()).unwrap_or(0);
 
     if bytes_copied != tmp_size || bytes_copied == 0 {
         let _ = std::fs::remove_file(&temp_path);
-        return Err(anyhow!(
-            "サイズ検証失敗 (コピー: {bytes_copied}, 書込: {tmp_size})"
-        ));
+        return Err(anyhow!("サイズ検証失敗 (コピー: {bytes_copied}, 書込: {tmp_size})"));
     }
 
     std::fs::rename(&temp_path, destination).map_err(|e| anyhow!("リネームに失敗: {e}"))
@@ -279,39 +260,24 @@ fn ready_env() -> Result<RuntimePaths> {
     let install_path: String = RegKey::predef(HKEY_CURRENT_USER)
         .open_subkey_with_flags("Software\\CosmoArtsStore\\Polaris", KEY_READ)
         .and_then(|key| key.get_value("InstallLocation"))
-        .map_err(|_| {
-            anyhow!("インストール情報を取得できませんでした。再インストールしてください。")
-        })?;
+        .map_err(|_| { anyhow!("インストール情報を取得できませんでした。再インストールしてください。") })?;
 
     let install_dir = PathBuf::from(install_path);
     if !install_dir.is_dir() {
-        return Err(anyhow!(
-            "インストール先フォルダが見つかりません。再インストールしてください。"
-        ));
+        return Err(anyhow!("インストール先フォルダが見つかりません。再インストールしてください。"));
     }
 
     let Some(profile_dir) = dirs::home_dir() else {
-        return Err(anyhow!(
-            "VRChatのログ排出先を特定できないため終了します。"
-        ));
+        return Err(anyhow!("VRChatのログ排出先を特定できないため終了します。"));
     };
 
-    let vrchat_log_folder = profile_dir
-        .join("AppData")
-        .join("LocalLow")
-        .join("VRChat")
-        .join("VRChat");
+    let vrchat_log_folder = profile_dir.join("AppData").join("LocalLow").join("VRChat").join("VRChat");
     if !vrchat_log_folder.is_dir() {
-        return Err(anyhow!(
-            "VRChatのログ排出先が見つからないため終了します。"
-        ));
+        return Err(anyhow!("VRChatのログ排出先が見つからないため終了します。"));
     }
 
     let data_dir = install_dir.join("Data");
-    let runtime_paths = RuntimePaths {
-        archive_folder: data_dir.join("archive"),
-        vrchat_log_folder,
-    };
+    let runtime_paths = RuntimePaths { archive_folder: data_dir.join("archive"), vrchat_log_folder, };
 
     init_logger(&data_dir)?;
 
@@ -324,11 +290,7 @@ fn init_logger(data_dir: &Path) -> Result<()> {
     let _ = std::fs::create_dir_all(&logs_dir);
     let log_path = logs_dir.join("info.log");
 
-    let max_level = if cfg!(debug_assertions) {
-        tracing::Level::DEBUG
-    } else {
-        tracing::Level::ERROR
-    };
+    let max_level = if cfg!(debug_assertions) { tracing::Level::DEBUG } else { tracing::Level::ERROR };
 
     fmt()
         .with_max_level(max_level)
@@ -344,10 +306,7 @@ fn init_logger(data_dir: &Path) -> Result<()> {
         .map_err(|e| anyhow!("ロガーを初期化できませんでした: {e}"))?;
 
     std::panic::set_hook(Box::new(|info| {
-        let loc = info.location().map_or_else(
-            || "unknown".to_string(),
-            |l| format!("{}:{}", l.file(), l.line()),
-        );
+        let loc = info.location().map_or_else(|| "unknown".to_string(), |l| format!("{}:{}", l.file(), l.line()),);
         error!("予期しないエラーが発生しました [{loc}]: {info}");
     }));
 
@@ -359,11 +318,161 @@ fn show_error(message: &str) {
     let title: Vec<u16> = "Polaris\0".encode_utf16().collect();
     let body: Vec<u16> = format!("{message}\0").encode_utf16().collect();
     unsafe {
-        let _ = MessageBoxW(
-            None,
-            PCWSTR(body.as_ptr()),
-            PCWSTR(title.as_ptr()),
-            MB_OK | MB_ICONERROR,
-        );
+        let _ = MessageBoxW(None, PCWSTR(body.as_ptr()), PCWSTR(title.as_ptr()), MB_OK | MB_ICONERROR,);
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::expect_used)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    static NEXT_DIRECTORY: AtomicU64 = AtomicU64::new(0);
+
+    // 各テストが作成した一時領域だけを所有し、実際のログ・archive・registryへ触れない。
+    struct TestDir(PathBuf);
+
+    impl TestDir {
+        fn new() -> Self {
+            let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).expect("現在時刻を取得できません").as_nanos();
+            let id = NEXT_DIRECTORY.fetch_add(1, Ordering::Relaxed);
+            let path = std::env::temp_dir().join(format!("polaris-test-{}-{timestamp}-{id}", std::process::id()));
+            fs::create_dir(&path).expect("テスト用directoryを作成できません");
+            Self(path)
+        }
+
+        fn path(&self, name: &str) -> PathBuf { self.0.join(name) }
+    }
+
+    impl Drop for TestDir {
+        fn drop(&mut self) { let _ = fs::remove_dir_all(&self.0); }
+    }
+
+    #[test]
+    fn vrchat_log_name_requires_exact_prefix_and_text_extension() {
+        for name in ["output_log_2026.txt", "output_log_2026.TXT", "folder/output_log_2026.Txt"] {
+            assert!(is_vrchat_log(Path::new(name)), "{name}");
+        }
+        for name in ["", "other.txt", "Output_log_2026.txt", "output_log_2026", "output_log_2026.txt.bak", "output_log_2026.csv"] {
+            assert!(!is_vrchat_log(Path::new(name)), "{name}");
+        }
+    }
+
+    #[test]
+    fn equal_nonempty_sizes_are_recognized_without_comparing_contents() {
+        let directory = TestDir::new();
+        let source = directory.path("source.txt");
+        let archive = directory.path("archive.txt");
+        fs::write(&source, b"abc").expect("元ファイルを書き込めません");
+        fs::write(&archive, b"xyz").expect("archiveを書き込めません");
+        assert!(is_same_size(&source, &archive));
+        fs::write(&archive, b"longer").expect("archiveを更新できません");
+        assert!(!is_same_size(&source, &archive));
+    }
+
+    #[test]
+    fn empty_or_missing_files_are_not_equal_nonempty_sizes() {
+        let directory = TestDir::new();
+        let empty = directory.path("empty.txt");
+        let missing = directory.path("missing.txt");
+        fs::write(&empty, []).expect("空ファイルを作成できません");
+        assert!(!is_same_size(&empty, &empty));
+        assert!(!is_same_size(&empty, &missing));
+        assert!(!is_same_size(&missing, &missing));
+    }
+
+    #[test]
+    fn stable_size_returns_current_size_and_missing_file_returns_none() {
+        let directory = TestDir::new();
+        let source = directory.path("source.txt");
+        fs::write(&source, b"stable").expect("元ファイルを書き込めません");
+        assert_eq!(wait_for_stable_size(&source), Some(6));
+        assert_eq!(wait_for_stable_size(&directory.path("missing.txt")), None);
+    }
+
+    #[test]
+    fn safe_copy_publishes_complete_contents_and_removes_temporary_file() {
+        let directory = TestDir::new();
+        let source = directory.path("source.txt");
+        let destination = directory.path("archive.txt");
+        fs::write(&source, "日本語のログ\n次の行").expect("元ファイルを書き込めません");
+        safe_copy(&source, &destination).expect("コピーに失敗しました");
+        assert_eq!(fs::read(&destination).expect("archiveを読み取れません"), fs::read(&source).expect("元ファイルを読み取れません"));
+        assert!(!destination.with_extension("polaris_tmp").exists());
+    }
+
+    #[test]
+    fn empty_source_is_not_published_and_existing_destination_is_preserved() {
+        let directory = TestDir::new();
+        let source = directory.path("empty.txt");
+        let destination = directory.path("archive.txt");
+        fs::write(&source, []).expect("空ファイルを作成できません");
+        fs::write(&destination, b"previous").expect("archiveを書き込めません");
+        assert!(safe_copy(&source, &destination).is_err());
+        assert_eq!(fs::read(&destination).expect("archiveを読み取れません"), b"previous");
+        assert!(!destination.with_extension("polaris_tmp").exists());
+    }
+
+    #[test]
+    fn missing_source_does_not_publish_destination() {
+        let directory = TestDir::new();
+        let destination = directory.path("archive.txt");
+        assert!(safe_copy(&directory.path("missing.txt"), &destination).is_err());
+        assert!(!destination.exists());
+        assert!(!destination.with_extension("polaris_tmp").exists());
+    }
+
+    #[test]
+    fn temporary_cleanup_is_limited_to_matching_files() {
+        let directory = TestDir::new();
+        let temporary = directory.path("interrupted.polaris_tmp");
+        let log = directory.path("output_log_2026.txt");
+        let other = directory.path("other.tmp");
+        let nested = directory.path("nested.polaris_tmp");
+        fs::write(&temporary, b"partial").expect("一時ファイルを作成できません");
+        fs::write(&log, b"log").expect("ログを作成できません");
+        fs::write(&other, b"other").expect("別ファイルを作成できません");
+        fs::create_dir(&nested).expect("子directoryを作成できません");
+        clean_temp_files(&directory.0);
+        assert!(!temporary.exists());
+        assert!(log.exists());
+        assert!(other.exists());
+        assert!(nested.is_dir());
+        clean_temp_files(&directory.path("missing"));
+    }
+
+    #[test]
+    fn backup_copies_logs_updates_changed_size_and_preserves_same_size_archive() {
+        let directory = TestDir::new();
+        let paths = RuntimePaths { vrchat_log_folder: directory.path("logs"), archive_folder: directory.path("archive") };
+        fs::create_dir(&paths.vrchat_log_folder).expect("ログdirectoryを作成できません");
+        fs::create_dir(&paths.archive_folder).expect("archive directoryを作成できません");
+        for (name, contents) in [("output_log_new.txt", "new"), ("output_log_changed.txt", "changed"), ("output_log_same.txt", "abc"), ("output_log_empty.txt", ""), ("other.txt", "other")] {
+            fs::write(paths.vrchat_log_folder.join(name), contents).expect("元ログを書き込めません");
+        }
+        fs::write(paths.archive_folder.join("output_log_changed.txt"), b"old").expect("旧archiveを書き込めません");
+        fs::write(paths.archive_folder.join("output_log_same.txt"), b"xyz").expect("同サイズのarchiveを書き込めません");
+        fs::write(paths.archive_folder.join("interrupted.polaris_tmp"), b"partial").expect("一時ファイルを作成できません");
+        backup(&paths);
+        for (name, expected) in [("output_log_new.txt", "new"), ("output_log_changed.txt", "changed"), ("output_log_same.txt", "xyz")] {
+            assert_eq!(fs::read_to_string(paths.archive_folder.join(name)).expect("archiveを読み取れません"), expected);
+        }
+        for name in ["output_log_empty.txt", "other.txt", "interrupted.polaris_tmp"] {
+            assert!(!paths.archive_folder.join(name).exists(), "{name}");
+        }
+    }
+
+    #[test]
+    fn missing_log_directory_preserves_existing_archives() {
+        let directory = TestDir::new();
+        let paths = RuntimePaths { vrchat_log_folder: directory.path("missing"), archive_folder: directory.path("archive") };
+        fs::create_dir(&paths.archive_folder).expect("archive directoryを作成できません");
+        let existing = paths.archive_folder.join("output_log_existing.txt");
+        fs::write(&existing, b"existing").expect("archiveを書き込めません");
+        backup(&paths);
+        assert_eq!(fs::read(&existing).expect("archiveを読み取れません"), b"existing");
     }
 }

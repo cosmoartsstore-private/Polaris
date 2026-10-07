@@ -1,6 +1,8 @@
 edition = "2021"
-max_width = 100
-fn_call_width = 100
-chain_width = 100
+# 短い引数・式の不要な分割を避ける。行長は整形時の目安として扱う。
+max_width = 240
+use_small_heuristics = "Max"
+fn_call_width = 240
+chain_width = 240
 tab_spaces = 4
 newline_style = "Unix"
