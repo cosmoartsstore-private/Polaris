@@ -24,6 +24,32 @@ ManifestDPIAwareness PerMonitorV2
 !include "StrFunc.nsh"
 ${StrCase}
 ${StrLoc}
+${StrRep}
+
+; $0の正規化済みpathを、既存rootの通常表記と8.3表記で境界まで比較する。
+!macro IsInstallPathUnderRoot root result
+  StrCpy ${result} 0
+  ${StrCase} $1 "${root}" "U"
+  StrLen $7 $1
+  IntOp $7 $7 + 1
+  StrCpy $7 $0 $7
+  ${If} $0 == $1
+  ${OrIf} $7 == "$1\"
+    StrCpy ${result} 1
+  ${Else}
+    GetFullPathName /SHORT $8 "${root}"
+    ${If} $8 != ""
+      ${StrCase} $8 "$8" "U"
+      StrLen $7 $8
+      IntOp $7 $7 + 1
+      StrCpy $7 $0 $7
+      ${If} $0 == $8
+      ${OrIf} $7 == "$8\"
+        StrCpy ${result} 1
+      ${EndIf}
+    ${EndIf}
+  ${EndIf}
+!macroend
 
 {{#if installer_hooks}}
 !include "{{installer_hooks}}"
@@ -454,26 +480,41 @@ Function .onVerifyInstDir
     Return
   ${EndIf}
 
-  ${StrCase} $0 "$INSTDIR" "U"
-  ${StrCase} $1 "$PROGRAMFILES" "U"
-  ${StrLoc} $2 $0 $1 ">"
-  ${If} $2 == 0
+  ; 相対要素と区切りを正規化し、同じprefixを持つ別folderを誤って拒否しない。
+  ${StrRep} $7 "$INSTDIR" "/" "\"
+  IntOp $8 ${NSIS_MAX_STRLEN} * 2
+  System::Alloc $8
+  Pop $8
+  ${If} $8 == 0
+    MessageBox MB_ICONSTOP|MB_OK "インストール先のパスを解決できません。別のフォルダを選択してください。"
+    Abort
+  ${EndIf}
+  System::Call 'kernel32::GetFullPathNameW(w r7, i ${NSIS_MAX_STRLEN}, p r8, p 0) i .r9'
+  ${If} $9 == 0
+  ${OrIf} $9 >= ${NSIS_MAX_STRLEN}
+    System::Free $8
+    MessageBox MB_ICONSTOP|MB_OK "インストール先のパスを解決できません。別のフォルダを選択してください。"
+    Abort
+  ${EndIf}
+  System::Call '*$8(&w${NSIS_MAX_STRLEN} .r0)'
+  System::Free $8
+  ${StrCase} $0 "$0" "U"
+  !insertmacro IsInstallPathUnderRoot "$PROGRAMFILES" $2
+  ${If} $2 == 1
     MessageBox MB_ICONSTOP|MB_OK "このアプリは Program Files 配下へはインストールできません。LocalAppData 配下を選択してください。"
     Abort
   ${EndIf}
 
   ${If} ${RunningX64}
-    ${StrCase} $3 "$PROGRAMFILES64" "U"
-    ${StrLoc} $4 $0 $3 ">"
-    ${If} $4 == 0
+    !insertmacro IsInstallPathUnderRoot "$PROGRAMFILES64" $4
+    ${If} $4 == 1
       MessageBox MB_ICONSTOP|MB_OK "このアプリは Program Files 配下へはインストールできません。LocalAppData 配下を選択してください。"
       Abort
     ${EndIf}
   ${EndIf}
 
-  ${StrCase} $5 "$WINDIR" "U"
-  ${StrLoc} $6 $0 $5 ">"
-  ${If} $6 == 0
+  !insertmacro IsInstallPathUnderRoot "$WINDIR" $6
+  ${If} $6 == 1
     MessageBox MB_ICONSTOP|MB_OK "Windows システム配下にはインストールできません。LocalAppData 配下を選択してください。"
     Abort
   ${EndIf}
@@ -592,7 +633,11 @@ Section WebView2
 SectionEnd
 
 Section Install
+  ClearErrors
   SetOutPath $INSTDIR
+  ${If} ${Errors}
+    Abort "インストール先フォルダを作成できませんでした。書き込み権限を確認してから再実行してください。"
+  ${EndIf}
 
   !ifmacrodef NSIS_HOOK_PREINSTALL
     !insertmacro NSIS_HOOK_PREINSTALL
@@ -601,7 +646,11 @@ Section Install
   !insertmacro CheckIfAppIsRunning "${MAINBINARYNAME}.exe" "${PRODUCTNAME}"
 
   ; 主実行ファイルの配置
+  ClearErrors
   File "${MAINBINARYSRCPATH}"
+  ${If} ${Errors}
+    Abort "アプリ本体を配置できませんでした。実行中の${PRODUCTNAME}を終了し、書き込み権限を確認してから再実行してください。"
+  ${EndIf}
 
   ; resource の配置
   {{#each resources_dirs}}
@@ -625,53 +674,137 @@ Section Install
 
   ; deep link の登録
   {{#each deep_link_protocols as |protocol| ~}}
+    ClearErrors
     WriteRegStr SHCTX "Software\Classes\\{{protocol}}" "URL Protocol" ""
+    ${If} ${Errors}
+      Abort "登録情報を保存できませんでした。アクセス権を確認してから再実行してください。"
+    ${EndIf}
+    ClearErrors
     WriteRegStr SHCTX "Software\Classes\\{{protocol}}" "" "URL:${BUNDLEID} protocol"
+    ${If} ${Errors}
+      Abort "登録情報を保存できませんでした。アクセス権を確認してから再実行してください。"
+    ${EndIf}
+    ClearErrors
     WriteRegStr SHCTX "Software\Classes\\{{protocol}}\DefaultIcon" "" "$\"$INSTDIR\${MAINBINARYNAME}.exe$\",0"
+    ${If} ${Errors}
+      Abort "登録情報を保存できませんでした。アクセス権を確認してから再実行してください。"
+    ${EndIf}
+    ClearErrors
     WriteRegStr SHCTX "Software\Classes\\{{protocol}}\shell\open\command" "" "$\"$INSTDIR\${MAINBINARYNAME}.exe$\" $\"%1$\""
+    ${If} ${Errors}
+      Abort "登録情報を保存できませんでした。アクセス権を確認してから再実行してください。"
+    ${EndIf}
   {{/each}}
 
   ; アンインストーラーの生成
+  ClearErrors
   WriteUninstaller "$INSTDIR\uninstall.exe"
+  ${If} ${Errors}
+    Abort "インストール情報またはショートカットを更新できませんでした。使用中のファイルとアクセス権を確認してから再実行してください。"
+  ${EndIf}
 
   ; 次回のインストールに使用する $INSTDIR を registry に保存する。
+  ClearErrors
   WriteRegStr SHCTX "${MANUPRODUCTKEY}" "" $INSTDIR
+  ${If} ${Errors}
+    Abort "登録情報を保存できませんでした。アクセス権を確認してから再実行してください。"
+  ${EndIf}
 
   !if "${INSTALLMODE}" == "both"
     ; 次回の更新または削除で使用する install mode を保存する。
     ;
+    ClearErrors
     WriteRegStr SHCTX "${UNINSTKEY}" $MultiUser.InstallMode 1
+    ${If} ${Errors}
+      Abort "登録情報を保存できませんでした。アクセス権を確認してから再実行してください。"
+    ${EndIf}
   !endif
 
   ; 主実行ファイル名が変わった場合は旧ファイルを削除する。
   ReadRegStr $OldMainBinaryName SHCTX "${UNINSTKEY}" "MainBinaryName"
   ${If} $OldMainBinaryName != ""
   ${AndIf} $OldMainBinaryName != "${MAINBINARYNAME}.exe"
+    ClearErrors
     Delete "$INSTDIR\$OldMainBinaryName"
+    ${If} ${Errors}
+      Abort "インストール情報またはショートカットを更新できませんでした。使用中のファイルとアクセス権を確認してから再実行してください。"
+    ${EndIf}
   ${EndIf}
 
   ; 次回の更新に使用する MAINBINARYNAME を保存する。
+  ClearErrors
   WriteRegStr SHCTX "${UNINSTKEY}" "MainBinaryName" "${MAINBINARYNAME}.exe"
+  ${If} ${Errors}
+    Abort "登録情報を保存できませんでした。アクセス権を確認してから再実行してください。"
+  ${EndIf}
 
   ; Windows のアプリ一覧への登録
+  ClearErrors
   WriteRegStr SHCTX "${UNINSTKEY}" "DisplayName" "${PRODUCTNAME}"
+  ${If} ${Errors}
+    Abort "登録情報を保存できませんでした。アクセス権を確認してから再実行してください。"
+  ${EndIf}
+  ClearErrors
   WriteRegStr SHCTX "${UNINSTKEY}" "DisplayIcon" "$\"$INSTDIR\${MAINBINARYNAME}.exe$\""
+  ${If} ${Errors}
+    Abort "登録情報を保存できませんでした。アクセス権を確認してから再実行してください。"
+  ${EndIf}
+  ClearErrors
   WriteRegStr SHCTX "${UNINSTKEY}" "DisplayVersion" "${VERSION}"
+  ${If} ${Errors}
+    Abort "登録情報を保存できませんでした。アクセス権を確認してから再実行してください。"
+  ${EndIf}
+  ClearErrors
   WriteRegStr SHCTX "${UNINSTKEY}" "Publisher" "${MANUFACTURER}"
+  ${If} ${Errors}
+    Abort "登録情報を保存できませんでした。アクセス権を確認してから再実行してください。"
+  ${EndIf}
+  ClearErrors
   WriteRegStr SHCTX "${UNINSTKEY}" "InstallLocation" "$\"$INSTDIR$\""
+  ${If} ${Errors}
+    Abort "登録情報を保存できませんでした。アクセス権を確認してから再実行してください。"
+  ${EndIf}
+  ClearErrors
   WriteRegStr SHCTX "${UNINSTKEY}" "UninstallString" "$\"$INSTDIR\uninstall.exe$\""
+  ${If} ${Errors}
+    Abort "登録情報を保存できませんでした。アクセス権を確認してから再実行してください。"
+  ${EndIf}
+  ClearErrors
   WriteRegDWORD SHCTX "${UNINSTKEY}" "NoModify" "1"
+  ${If} ${Errors}
+    Abort "登録情報を保存できませんでした。アクセス権を確認してから再実行してください。"
+  ${EndIf}
+  ClearErrors
   WriteRegDWORD SHCTX "${UNINSTKEY}" "NoRepair" "1"
+  ${If} ${Errors}
+    Abort "登録情報を保存できませんでした。アクセス権を確認してから再実行してください。"
+  ${EndIf}
 
   ${GetSize} "$INSTDIR" "/M=uninstall.exe /S=0K /G=0" $0 $1 $2
   IntOp $0 $0 + ${ESTIMATEDSIZE}
   IntFmt $0 "0x%08X" $0
+  ClearErrors
   WriteRegDWORD SHCTX "${UNINSTKEY}" "EstimatedSize" "$0"
+  ${If} ${Errors}
+    Abort "登録情報を保存できませんでした。アクセス権を確認してから再実行してください。"
+  ${EndIf}
 
   !if "${HOMEPAGE}" != ""
+    ClearErrors
     WriteRegStr SHCTX "${UNINSTKEY}" "URLInfoAbout" "${HOMEPAGE}"
+    ${If} ${Errors}
+      Abort "登録情報を保存できませんでした。アクセス権を確認してから再実行してください。"
+    ${EndIf}
+    ClearErrors
     WriteRegStr SHCTX "${UNINSTKEY}" "URLUpdateInfo" "${HOMEPAGE}"
+    ${If} ${Errors}
+      Abort "登録情報を保存できませんでした。アクセス権を確認してから再実行してください。"
+    ${EndIf}
+    ClearErrors
     WriteRegStr SHCTX "${UNINSTKEY}" "HelpLink" "${HOMEPAGE}"
+    ${If} ${Errors}
+      Abort "登録情報を保存できませんでした。アクセス権を確認してから再実行してください。"
+    ${EndIf}
   !endif
 
   ; Start menu の shortcut 作成
@@ -691,7 +824,11 @@ Section Install
   !endif
 
   ; 追加: 共通命名規則に基づくregistry位置への書き込み
+  ClearErrors
   WriteRegStr HKCU "Software\CosmoArtsStore\Polaris" "InstallLocation" "$INSTDIR"
+  ${If} ${Errors}
+    Abort "登録情報を保存できませんでした。アクセス権を確認してから再実行してください。"
+  ${EndIf}
 
   ; passive mode ではこの画面を自動で閉じる。
   ${If} $PassiveMode = 1
@@ -732,6 +869,40 @@ Function un.onInit
   ${EndIf}
 FunctionEnd
 
+; 削除済み登録の再試行は成功とし、残存するkey/valueへのアクセス失敗は中断する。
+!macro VerifyUninstallRegistryDeletion root key kind value
+  ${If} ${Errors}
+    StrCpy $8 0x80000001
+    !if "${root}" == "HKLM"
+      StrCpy $8 0x80000002
+    !else if "${root}" == "SHCTX"
+      !if "${INSTALLMODE}" == "perMachine"
+        StrCpy $8 0x80000002
+      !else if "${INSTALLMODE}" == "both"
+        ${If} $MultiUser.InstallMode == "AllUsers"
+          StrCpy $8 0x80000002
+        ${EndIf}
+      !endif
+    !endif
+    !if "${ARCH}" == "x64"
+      StrCpy $9 0x101
+    !else
+      StrCpy $9 1
+    !endif
+    System::Call 'advapi32::RegOpenKeyExW(p r8, w "${key}", i 0, i r9, *p .r7) i .r9'
+    ${If} $9 == 0
+      !if "${kind}" == "value"
+        System::Call 'advapi32::RegQueryValueExW(p r7, w "${value}", p 0, p 0, p 0, p 0) i .r9'
+      !endif
+      System::Call 'advapi32::RegCloseKey(p r7)'
+    ${EndIf}
+    ${If} $9 != 2
+      Abort "登録情報を削除できませんでした。アクセス権を確認してから再実行してください。"
+    ${EndIf}
+    ClearErrors
+  ${EndIf}
+!macroend
+
 Section Uninstall
 
   !ifmacrodef NSIS_HOOK_PREUNINSTALL
@@ -742,16 +913,28 @@ Section Uninstall
 
   ; アプリ本体と同梱ファイルの削除
   ; 主実行ファイルの削除
+  ClearErrors
   Delete "$INSTDIR\${MAINBINARYNAME}.exe"
+  ${If} ${Errors}
+    Abort "削除対象を削除できませんでした。アプリを終了し、アクセス権を確認してから再実行してください。"
+  ${EndIf}
 
   ; resource の削除
   {{#each resources}}
+  ClearErrors
     Delete "$INSTDIR\\{{this.[1]}}"
+  ${If} ${Errors}
+    Abort "削除対象を削除できませんでした。アプリを終了し、アクセス権を確認してから再実行してください。"
+  ${EndIf}
   {{/each}}
 
   ; 外部実行ファイルの削除
   {{#each binaries}}
+  ClearErrors
     Delete "$INSTDIR\\{{this}}"
+  ${If} ${Errors}
+    Abort "削除対象を削除できませんでした。アプリを終了し、アクセス権を確認してから再実行してください。"
+  ${EndIf}
   {{/each}}
 
   ; ファイル関連付けの解除
@@ -765,13 +948,14 @@ Section Uninstall
   {{#each deep_link_protocols as |protocol| ~}}
     ReadRegStr $R7 SHCTX "Software\Classes\\{{protocol}}\shell\open\command" ""
     ${If} $R7 == "$\"$INSTDIR\${MAINBINARYNAME}.exe$\" $\"%1$\""
+      ClearErrors
       DeleteRegKey SHCTX "Software\Classes\\{{protocol}}"
+      !insertmacro VerifyUninstallRegistryDeletion SHCTX "Software\Classes\\{{protocol}}" key ""
     ${EndIf}
   {{/each}}
 
 
   ; アンインストーラーの削除
-  Delete "$INSTDIR\uninstall.exe"
 
   {{#each resources_ancestors}}
   RMDir /REBOOTOK "$INSTDIR\\{{this}}"
@@ -788,14 +972,22 @@ Section Uninstall
     Pop $0
     ${If} $0 = 1
       !insertmacro UnpinShortcut "$SMPROGRAMS\$AppStartMenuFolder\${PRODUCTNAME}.lnk"
+      ClearErrors
       Delete "$SMPROGRAMS\$AppStartMenuFolder\${PRODUCTNAME}.lnk"
+      ${If} ${Errors}
+        Abort "インストール情報またはショートカットを更新できませんでした。使用中のファイルとアクセス権を確認してから再実行してください。"
+      ${EndIf}
       RMDir "$SMPROGRAMS\$AppStartMenuFolder"
     ${EndIf}
     !insertmacro IsShortcutTarget "$SMPROGRAMS\${PRODUCTNAME}.lnk" "$INSTDIR\${MAINBINARYNAME}.exe"
     Pop $0
     ${If} $0 = 1
       !insertmacro UnpinShortcut "$SMPROGRAMS\${PRODUCTNAME}.lnk"
+      ClearErrors
       Delete "$SMPROGRAMS\${PRODUCTNAME}.lnk"
+      ${If} ${Errors}
+        Abort "インストール情報またはショートカットを更新できませんでした。使用中のファイルとアクセス権を確認してから再実行してください。"
+      ${EndIf}
     ${EndIf}
 
     ; desktop shortcut の削除
@@ -803,17 +995,53 @@ Section Uninstall
     Pop $0
     ${If} $0 = 1
       !insertmacro UnpinShortcut "$DESKTOP\${PRODUCTNAME}.lnk"
+      ClearErrors
       Delete "$DESKTOP\${PRODUCTNAME}.lnk"
+      ${If} ${Errors}
+        Abort "インストール情報またはショートカットを更新できませんでした。使用中のファイルとアクセス権を確認してから再実行してください。"
+      ${EndIf}
     ${EndIf}
+  ${EndIf}
+
+
+  ; 必須の削除を先に完了し、失敗時は登録情報とuninstallerを保持する。
+  ${If} $UpdateMode <> 1
+    SetShellVarContext current
+  ClearErrors
+    RmDir /r "$INSTDIR\Data\logs"
+  ${If} ${Errors}
+    Abort "削除対象を削除できませんでした。アプリを終了し、アクセス権を確認してから再実行してください。"
+  ${EndIf}
+  ClearErrors
+    Delete "$INSTDIR\info.log"
+  ${If} ${Errors}
+    Abort "削除対象を削除できませんでした。アプリを終了し、アクセス権を確認してから再実行してください。"
+  ${EndIf}
+  ClearErrors
+    RmDir /r "$APPDATA\${BUNDLEID}"
+  ${If} ${Errors}
+    Abort "削除対象を削除できませんでした。アプリを終了し、アクセス権を確認してから再実行してください。"
+  ${EndIf}
+  ClearErrors
+    RmDir /r "$LOCALAPPDATA\${BUNDLEID}"
+  ${If} ${Errors}
+    Abort "削除対象を削除できませんでした。アプリを終了し、アクセス権を確認してから再実行してください。"
+  ${EndIf}
   ${EndIf}
 
   ; Windows のアプリ一覧への登録を削除する。
   !if "${INSTALLMODE}" == "both"
+    ClearErrors
     DeleteRegKey SHCTX "${UNINSTKEY}"
+    !insertmacro VerifyUninstallRegistryDeletion SHCTX "${UNINSTKEY}" key ""
   !else if "${INSTALLMODE}" == "perMachine"
+    ClearErrors
     DeleteRegKey HKLM "${UNINSTKEY}"
+    !insertmacro VerifyUninstallRegistryDeletion HKLM "${UNINSTKEY}" key ""
   !else
+    ClearErrors
     DeleteRegKey HKCU "${UNINSTKEY}"
+    !insertmacro VerifyUninstallRegistryDeletion HKCU "${UNINSTKEY}" key ""
   !endif
 
   ; 通常の削除時は HKCU Run key の ${PRODUCTNAME} を削除する。
@@ -821,29 +1049,42 @@ Section Uninstall
   ; 登録がない場合は処理を行わない。
   ; 更新時は自動起動設定を保持する。
   ${If} $UpdateMode <> 1
+    ClearErrors
     DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "${PRODUCTNAME}"
+    !insertmacro VerifyUninstallRegistryDeletion HKCU "Software\Microsoft\Windows\CurrentVersion\Run" value "${PRODUCTNAME}"
   ${EndIf}
 
   ; 再生成できないログを持つ Data\archive は保持する。
   ; Polaris には DB と画面がないため、Data\db と Data\EBWebView の削除は不要である。
   ${If} $UpdateMode <> 1
+    ClearErrors
     DeleteRegKey SHCTX "${MANUPRODUCTKEY}"
+    !insertmacro VerifyUninstallRegistryDeletion SHCTX "${MANUPRODUCTKEY}" key ""
     DeleteRegKey /ifempty SHCTX "${MANUKEY}"
+    ClearErrors
     DeleteRegValue HKCU "${MANUPRODUCTKEY}" "Installer Language"
+    !insertmacro VerifyUninstallRegistryDeletion HKCU "${MANUPRODUCTKEY}" value "Installer Language"
     DeleteRegKey /ifempty HKCU "${MANUPRODUCTKEY}"
     DeleteRegKey /ifempty HKCU "${MANUKEY}"
+    ClearErrors
     DeleteRegKey HKCU "Software\CosmoArtsStore\Polaris"
+    !insertmacro VerifyUninstallRegistryDeletion HKCU "Software\CosmoArtsStore\Polaris" key ""
     SetShellVarContext current
-    RmDir /r "$INSTDIR\Data\logs"
     ; 旧配置でインストール先直下に作られたファイル
-    Delete "$INSTDIR\info.log"
-    RmDir /r "$APPDATA\${BUNDLEID}"
-    RmDir /r "$LOCALAPPDATA\${BUNDLEID}"
     ; ログ原本のコピーを保持するため、Data\archive は削除しない。
     ; archive を保持し、Data と $INSTDIR は空の場合だけ削除する。
     RmDir "$INSTDIR\Data"
     RmDir "$INSTDIR"
   ${EndIf}
+
+
+  ; 再試行用の実行ファイルは必須削除と登録解除が完了してから削除する。
+  ClearErrors
+  Delete "$INSTDIR\uninstall.exe"
+  ${If} ${Errors}
+    Abort "削除対象を削除できませんでした。アプリを終了し、アクセス権を確認してから再実行してください。"
+  ${EndIf}
+  RMDir "$INSTDIR"
 
   !ifmacrodef NSIS_HOOK_POSTUNINSTALL
     !insertmacro NSIS_HOOK_POSTUNINSTALL
@@ -882,6 +1123,11 @@ Function CreateOrUpdateStartMenuShortcut
   Pop $0
   ${If} $0 = 1
     !insertmacro SetShortcutTarget "$SMPROGRAMS\$AppStartMenuFolder\${PRODUCTNAME}.lnk" "$INSTDIR\${MAINBINARYNAME}.exe"
+    !insertmacro IsShortcutTarget "$SMPROGRAMS\$AppStartMenuFolder\${PRODUCTNAME}.lnk" "$INSTDIR\${MAINBINARYNAME}.exe"
+    Pop $0
+    ${If} $0 != 1
+      Abort "ショートカットの参照先を更新できませんでした。使用中のファイルとアクセス権を確認してから再実行してください。"
+    ${EndIf}
     StrCpy $R0 1
   ${EndIf}
 
@@ -889,6 +1135,11 @@ Function CreateOrUpdateStartMenuShortcut
   Pop $0
   ${If} $0 = 1
     !insertmacro SetShortcutTarget "$SMPROGRAMS\${PRODUCTNAME}.lnk" "$INSTDIR\${MAINBINARYNAME}.exe"
+    !insertmacro IsShortcutTarget "$SMPROGRAMS\${PRODUCTNAME}.lnk" "$INSTDIR\${MAINBINARYNAME}.exe"
+    Pop $0
+    ${If} $0 != 1
+      Abort "ショートカットの参照先を更新できませんでした。使用中のファイルとアクセス権を確認してから再実行してください。"
+    ${EndIf}
     StrCpy $R0 1
   ${EndIf}
 
@@ -906,11 +1157,23 @@ Function CreateOrUpdateStartMenuShortcut
   ${EndIf}
 
   !if "${STARTMENUFOLDER}" != ""
+    ClearErrors
     CreateDirectory "$SMPROGRAMS\$AppStartMenuFolder"
+    ${If} ${Errors}
+      Abort "インストール情報またはショートカットを更新できませんでした。使用中のファイルとアクセス権を確認してから再実行してください。"
+    ${EndIf}
+    ClearErrors
     CreateShortcut "$SMPROGRAMS\$AppStartMenuFolder\${PRODUCTNAME}.lnk" "$INSTDIR\${MAINBINARYNAME}.exe"
+    ${If} ${Errors}
+      Abort "インストール情報またはショートカットを更新できませんでした。使用中のファイルとアクセス権を確認してから再実行してください。"
+    ${EndIf}
     !insertmacro SetLnkAppUserModelId "$SMPROGRAMS\$AppStartMenuFolder\${PRODUCTNAME}.lnk"
   !else
+    ClearErrors
     CreateShortcut "$SMPROGRAMS\${PRODUCTNAME}.lnk" "$INSTDIR\${MAINBINARYNAME}.exe"
+    ${If} ${Errors}
+      Abort "インストール情報またはショートカットを更新できませんでした。使用中のファイルとアクセス権を確認してから再実行してください。"
+    ${EndIf}
     !insertmacro SetLnkAppUserModelId "$SMPROGRAMS\${PRODUCTNAME}.lnk"
   !endif
 FunctionEnd
@@ -922,6 +1185,11 @@ Function CreateOrUpdateDesktopShortcut
   Pop $0
   ${If} $0 = 1
     !insertmacro SetShortcutTarget "$DESKTOP\${PRODUCTNAME}.lnk" "$INSTDIR\${MAINBINARYNAME}.exe"
+    !insertmacro IsShortcutTarget "$DESKTOP\${PRODUCTNAME}.lnk" "$INSTDIR\${MAINBINARYNAME}.exe"
+    Pop $0
+    ${If} $0 != 1
+      Abort "ショートカットの参照先を更新できませんでした。使用中のファイルとアクセス権を確認してから再実行してください。"
+    ${EndIf}
     Return
   ${EndIf}
 
@@ -934,6 +1202,10 @@ Function CreateOrUpdateDesktopShortcut
     ${EndIf}
   ${EndIf}
 
+  ClearErrors
   CreateShortcut "$DESKTOP\${PRODUCTNAME}.lnk" "$INSTDIR\${MAINBINARYNAME}.exe"
+  ${If} ${Errors}
+    Abort "インストール情報またはショートカットを更新できませんでした。使用中のファイルとアクセス権を確認してから再実行してください。"
+  ${EndIf}
   !insertmacro SetLnkAppUserModelId "$DESKTOP\${PRODUCTNAME}.lnk"
 FunctionEnd
