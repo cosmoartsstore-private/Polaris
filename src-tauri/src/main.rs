@@ -1,5 +1,13 @@
 #![windows_subsystem = "windows"]
 
+include!(concat!(env!("OUT_DIR"), "/messages.rs"));
+
+mod constants;
+mod utils;
+
+use constants::{ APP_NAME, ARCHIVE_DIRECTORY, DATA_DIRECTORY, INSTALL_LOCATION_VALUE, LOG_DIRECTORY, LOG_FILE, REGISTRY_KEY_PATH, VRCHAT_LOG_EXTENSION, VRCHAT_LOG_PREFIX, VRCHAT_LOG_RELATIVE_PATH, VRCHAT_PROCESS_NAME };
+use utils::{ is_same_size, to_wide };
+
 use std::fs::OpenOptions;
 use std::io;
 use std::path::{ Path, PathBuf };
@@ -23,6 +31,8 @@ struct RuntimePaths {
 
 // 一時コピーと残存ファイル削除で同じ拡張子を使用する。
 const BACKUP_TEMP_EXTENSION: &str = "polaris_tmp";
+const PROCESS_POLL_INTERVAL: Duration = Duration::from_secs(1);
+const POST_EXIT_SETTLE_DELAY: Duration = Duration::from_secs(3);
 
 #[cfg(not(test))]
 const SINGLE_INSTANCE_MUTEX_NAME: &str = "Local\\Polaris_SingleInstance";
@@ -46,12 +56,12 @@ fn main() {
 
 // ── ミューテックス(多重起動防止)処理 ───────────────────────────────────────────────
 fn acquire_mutex() {
-    let name: Vec<u16> = SINGLE_INSTANCE_MUTEX_NAME.encode_utf16().chain([0]).collect();
+    let name = to_wide(SINGLE_INSTANCE_MUTEX_NAME);
 
     let handle = match unsafe { CreateMutexW(None, true, PCWSTR(name.as_ptr())) } {
         Ok(h) => h,
         Err(e) => {
-            show_error(&format!("ミューテックスを作成できませんでした: {e}"));
+            show_error(&format!(message!("Runtime.mutexCreateFailed"), error = e));
             std::process::exit(0);
         }
     };
@@ -77,7 +87,7 @@ fn run_polling_loop(runtime_paths: &RuntimePaths) -> ! {
     }
 
     loop {
-        std::thread::sleep(Duration::from_secs(1));
+        std::thread::sleep(PROCESS_POLL_INTERVAL);
 
         let current_pid = find_vrchat_pid();
 
@@ -90,7 +100,7 @@ fn run_polling_loop(runtime_paths: &RuntimePaths) -> ! {
         if exited {
             debug!("VRChatの終了を検知。バックアップを開始します。");
             // 書き込み完了待ち
-            std::thread::sleep(Duration::from_secs(3));
+            std::thread::sleep(POST_EXIT_SETTLE_DELAY);
             backup(runtime_paths);
         }
 
@@ -114,7 +124,7 @@ fn find_vrchat_pid() -> Option<u32> {
                 let nul_pos = entry.szExeFile.iter().position(|&c| c == 0).unwrap_or(entry.szExeFile.len());
                 let name = String::from_utf16_lossy(&entry.szExeFile[..nul_pos]);
 
-                let matching_name = name.eq_ignore_ascii_case("vrchat.exe");
+                let matching_name = name.eq_ignore_ascii_case(VRCHAT_PROCESS_NAME);
                 #[cfg(test)]
                 let matching_name = matching_name && tests::is_owned_test_vrchat_pid(entry.th32ProcessID);
                 if matching_name {
@@ -208,23 +218,17 @@ fn is_vrchat_log(path: &Path) -> bool {
     let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
         return false;
     };
-    name.starts_with("output_log_") && path.extension().is_some_and(|ext| ext.eq_ignore_ascii_case("txt"))
-}
-
-/// 同名ファイルのサイズが一致し、かつ 0 でないか判定
-fn is_same_size(a: &Path, b: &Path) -> bool {
-    let size_a = std::fs::metadata(a).map(|m| m.len()).unwrap_or(0);
-    let size_b = std::fs::metadata(b).map(|m| m.len()).unwrap_or(0);
-    size_a == size_b && size_a > 0
+    name.starts_with(VRCHAT_LOG_PREFIX) && path.extension().is_some_and(|ext| ext.eq_ignore_ascii_case(VRCHAT_LOG_EXTENSION))
 }
 
 /// 500ms間隔で最大6回サイズを確認。連続一致でOK判定
 fn wait_for_stable_size(path: &Path) -> Option<u64> {
     const MAX_CHECKS: u32 = 6;
+    const CHECK_INTERVAL: Duration = Duration::from_millis(500);
     let mut prev = std::fs::metadata(path).ok()?.len();
 
     for _ in 0..MAX_CHECKS {
-        std::thread::sleep(Duration::from_millis(500));
+        std::thread::sleep(CHECK_INTERVAL);
         match std::fs::metadata(path).map(|m| m.len()) {
             Ok(current) if current == prev => return Some(current),
             Ok(current) => prev = current,
@@ -239,16 +243,16 @@ fn wait_for_stable_size(path: &Path) -> Option<u64> {
 fn safe_copy(source: &Path, destination: &Path) -> Result<()> {
     let temp_path = destination.with_extension(BACKUP_TEMP_EXTENSION);
 
-    let bytes_copied = std::fs::copy(source, &temp_path).map_err(|e| anyhow!("一時ファイルへのコピーに失敗: {e}"))?;
+    let bytes_copied = std::fs::copy(source, &temp_path).map_err(|e| anyhow!(message!("Backup.copyFailed"), error = e))?;
 
     let tmp_size = std::fs::metadata(&temp_path).map(|m| m.len()).unwrap_or(0);
 
     if bytes_copied != tmp_size || bytes_copied == 0 {
         let _ = std::fs::remove_file(&temp_path);
-        return Err(anyhow!("サイズ検証失敗 (コピー: {bytes_copied}, 書込: {tmp_size})"));
+        return Err(anyhow!(message!("Backup.sizeVerificationFailed"), copied = bytes_copied, written = tmp_size));
     }
 
-    std::fs::rename(&temp_path, destination).map_err(|e| anyhow!("リネームに失敗: {e}"))
+    std::fs::rename(&temp_path, destination).map_err(|e| anyhow!(message!("Backup.renameFailed"), error = e))
 }
 
 /// archiveフォルダ内に残っているtmpファイルを削除
@@ -270,26 +274,26 @@ fn clean_temp_files(archive_folder: &Path) {
 /// インストールパス取得 & ロガー初期化
 fn ready_env() -> Result<RuntimePaths> {
     let install_path: String = RegKey::predef(HKEY_CURRENT_USER)
-        .open_subkey_with_flags("Software\\CosmoArtsStore\\Polaris", KEY_READ)
-        .and_then(|key| key.get_value("InstallLocation"))
-        .map_err(|_| { anyhow!("インストール情報を取得できませんでした。再インストールしてください。") })?;
+        .open_subkey_with_flags(REGISTRY_KEY_PATH, KEY_READ)
+        .and_then(|key| key.get_value(INSTALL_LOCATION_VALUE))
+        .map_err(|_| { anyhow!(message!("Runtime.installInformationUnavailable")) })?;
 
     let install_dir = PathBuf::from(install_path);
     if !install_dir.is_dir() {
-        return Err(anyhow!("インストール先フォルダが見つかりません。再インストールしてください。"));
+        return Err(anyhow!(message!("Runtime.installDirectoryMissing")));
     }
 
     let Some(profile_dir) = dirs::home_dir() else {
-        return Err(anyhow!("VRChatのログ排出先を特定できないため終了します。"));
+        return Err(anyhow!(message!("Runtime.profileDirectoryUnavailable")));
     };
 
-    let vrchat_log_folder = profile_dir.join("AppData").join("LocalLow").join("VRChat").join("VRChat");
+    let vrchat_log_folder = VRCHAT_LOG_RELATIVE_PATH.iter().fold(profile_dir, |path, segment| path.join(segment));
     if !vrchat_log_folder.is_dir() {
-        return Err(anyhow!("VRChatのログ排出先が見つからないため終了します。"));
+        return Err(anyhow!(message!("Runtime.vrchatLogDirectoryMissing")));
     }
 
-    let data_dir = install_dir.join("Data");
-    let runtime_paths = RuntimePaths { archive_folder: data_dir.join("archive"), vrchat_log_folder, };
+    let data_dir = install_dir.join(DATA_DIRECTORY);
+    let runtime_paths = RuntimePaths { archive_folder: data_dir.join(ARCHIVE_DIRECTORY), vrchat_log_folder, };
 
     init_logger(&data_dir)?;
 
@@ -298,9 +302,9 @@ fn ready_env() -> Result<RuntimePaths> {
 
 /// ファイルロガー初期化 & パニック時のログ出力設定
 fn init_logger(data_dir: &Path) -> Result<()> {
-    let logs_dir = data_dir.join("logs");
+    let logs_dir = data_dir.join(LOG_DIRECTORY);
     let _ = std::fs::create_dir_all(&logs_dir);
-    let log_path = logs_dir.join("info.log");
+    let log_path = logs_dir.join(LOG_FILE);
 
     let max_level = if cfg!(debug_assertions) { tracing::Level::DEBUG } else { tracing::Level::ERROR };
 
@@ -315,7 +319,7 @@ fn init_logger(data_dir: &Path) -> Result<()> {
             }
         })
         .try_init()
-        .map_err(|e| anyhow!("ロガーを初期化できませんでした: {e}"))?;
+        .map_err(|e| anyhow!(message!("Runtime.loggerInitializationFailed"), error = e))?;
 
     std::panic::set_hook(Box::new(|info| {
         let loc = info.location().map_or_else(|| "unknown".to_string(), |l| format!("{}:{}", l.file(), l.line()),);
@@ -327,8 +331,8 @@ fn init_logger(data_dir: &Path) -> Result<()> {
 
 /// エラーメッセージをメッセージボックスで表示
 fn show_error(message: &str) {
-    let title: Vec<u16> = "Polaris\0".encode_utf16().collect();
-    let body: Vec<u16> = format!("{message}\0").encode_utf16().collect();
+    let title = to_wide(APP_NAME);
+    let body = to_wide(message);
     unsafe {
         let _ = MessageBoxW(None, PCWSTR(body.as_ptr()), PCWSTR(title.as_ptr()), MB_OK | MB_ICONERROR,);
     }
